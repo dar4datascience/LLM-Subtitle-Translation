@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import sys
 from pathlib import Path
-from transformers import MarianMTModel, MarianTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from tqdm import tqdm
 
 # -------------------------------
-# Step 0 — Load MarianMT model
+# Step 0 — Load NLLB model
 # -------------------------------
-MODEL_NAME = "Helsinki-NLP/opus-mt-en-es"
-tokenizer = MarianTokenizer.from_pretrained(MODEL_NAME)
-model = MarianMTModel.from_pretrained(MODEL_NAME)
+MODEL_NAME = "facebook/nllb-200-distilled-600M"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, src_lang="eng_Latn")
+model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
+
+# NLLB language codes
+SRC_LANG = "eng_Latn"  # English
+TGT_LANG = "spa_Latn"  # Spanish
 
 # -------------------------------
 # Step 1 — Helper: Translate text
@@ -19,8 +23,10 @@ def translate_text(lines):
     lines: list of strings
     returns: list of translated strings
     """
+    tokenizer.src_lang = SRC_LANG
     batch = tokenizer(lines, return_tensors="pt", padding=True)
-    translated_tokens = model.generate(**batch)
+    forced_bos_token_id = tokenizer.lang_code_to_id[TGT_LANG]
+    translated_tokens = model.generate(**batch, forced_bos_token_id=forced_bos_token_id)
     translated = [tokenizer.decode(t, skip_special_tokens=True) for t in translated_tokens]
     return translated
 

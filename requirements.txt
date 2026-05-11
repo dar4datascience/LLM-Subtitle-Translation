@@ -1,0 +1,6 @@
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+tqdm>=4.65.0
+pgsrip>=0.1.12

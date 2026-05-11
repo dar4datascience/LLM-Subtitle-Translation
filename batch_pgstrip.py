@@ -15,7 +15,8 @@ def run_pgstrip(mkv_path: Path):
     """
     print(f"\nProcessing: {mkv_path}")
     cmd = [
-        "pgsrip",                  # make sure 'pgsrip' is in PATH
+        sys.executable,
+        "-m", "pgsrip",
         str(mkv_path)
     ]
 
