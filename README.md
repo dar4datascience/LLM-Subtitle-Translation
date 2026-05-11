@@ -50,10 +50,20 @@ python batch_pgstrip.py /path/to/folder -a 0 -b 2 -y 0 --no-recursive
 ### 2. Translate SRT Files
 
 ```bash
+# Single file
+python translate_srt_folder.py /path/to/file.srt
+
+# Folder (recursive by default)
 python translate_srt_folder.py /path/to/folder/with/srt/files
+
+# Only current folder, no subdirectories
+python translate_srt_folder.py /path/to/folder --no-recursive
 ```
 
-Translates all `.srt` files to Spanish, outputs as `.es.srt`.
+Translates English `.srt` files to Spanish, outputs as `.es.srt`.
+
+**Options:**
+- `--no-recursive`: Only process current folder, skip subdirectories
 
 ## Model
 

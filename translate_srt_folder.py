@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import argparse
 from pathlib import Path
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from tqdm import tqdm
@@ -81,8 +82,19 @@ def translate_srt_file(srt_path: Path):
 # -------------------------------
 # Step 3 — Process folder
 # -------------------------------
-def translate_srt_folder(folder_path: Path):
-    srt_files = list(folder_path.rglob("*.srt"))
+def translate_srt_folder(folder_path: Path, recursive=True):
+    """
+    Process all SRT files in a folder.
+    
+    Args:
+        folder_path: Path to folder
+        recursive: If True, search subdirectories. If False, only current folder.
+    """
+    if recursive:
+        srt_files = list(folder_path.rglob("*.srt"))
+    else:
+        srt_files = list(folder_path.glob("*.srt"))
+    
     if not srt_files:
         print("No SRT files found in folder.")
         return
@@ -96,14 +108,30 @@ def translate_srt_folder(folder_path: Path):
 # CLI
 # -------------------------------
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python translate_srt_folder.py <folder>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Translate SRT subtitle files from English to Spanish using NLLB-200"
+    )
+    parser.add_argument("path", type=str, help="SRT file or folder containing SRT files")
+    parser.add_argument(
+        "--no-recursive",
+        action="store_true",
+        help="Only process SRT files in the specified folder, not subdirectories"
+    )
+    
+    args = parser.parse_args()
 
-    folder = Path(sys.argv[1])
-    if not folder.is_dir():
-        print(f"{folder} is not a valid folder.")
+    input_path = Path(args.path)
+    
+    if input_path.is_file():
+        if input_path.suffix.lower() != ".srt":
+            print(f"{input_path} is not an SRT file.")
+            sys.exit(1)
+        print(f"Translating single file: {input_path}")
+        translate_srt_file(input_path)
+        print("\n✅ Translation completed!")
+    elif input_path.is_dir():
+        translate_srt_folder(input_path, recursive=not args.no_recursive)
+        print("\n✅ Translation completed!")
+    else:
+        print(f"{input_path} is not a valid file or folder.")
         sys.exit(1)
-
-    translate_srt_folder(folder)
-    print("\n✅ Translation completed!")
