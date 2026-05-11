@@ -168,7 +168,14 @@ def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=Non
     if not translated_path:
         return (False, srt_path, None)
     
-    return (True, srt_path, translated_path)
+    # Step 3: Clean up - delete original English SRT
+    try:
+        srt_path.unlink()
+        logging.info(f"Deleted original SRT: {srt_path}")
+    except Exception as e:
+        logging.warning(f"Could not delete original SRT {srt_path}: {e}")
+    
+    return (True, None, translated_path)
 
 def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None, track_b=None, track_y=None):
     """
@@ -243,11 +250,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Setup logging
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+    
     if args.log_file:
         log_file = Path(args.log_file)
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = Path(f"pipeline_{timestamp}.log")
+        log_file = logs_dir / f"pipeline_{timestamp}.log"
     
     logger = setup_logging(log_file)
     logging.info("="*60)
@@ -310,9 +320,13 @@ if __name__ == "__main__":
         if success:
             logging.info("="*60)
             logging.info("✅ Pipeline completed successfully!")
-            logging.info(f"English SRT: {srt_path}")
-            logging.info(f"Spanish SRT: {translated_path}")
+            logging.info(f"Output: {translated_path}")
             logging.info("="*60)
+            
+            # Delete log file on success
+            logging.shutdown()
+            if log_file.exists():
+                log_file.unlink()
         else:
             logging.error("="*60)
             logging.error("❌ Pipeline failed")
@@ -344,6 +358,11 @@ if __name__ == "__main__":
         
         if results["failed"] > 0:
             sys.exit(1)
+        else:
+            # Delete log file on complete success
+            logging.shutdown()
+            if log_file.exists():
+                log_file.unlink()
     
     else:
         logging.error(f"{input_path} is not a valid file or folder")

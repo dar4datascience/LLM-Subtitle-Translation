@@ -49,7 +49,10 @@ python pipeline.py /path/to/folder --dry-run
 **Features:**
 - Extracts PGS subtitles from MKV → SRT
 - Translates English → Spanish automatically
-- Logs all operations to timestamped log file
+- **Auto-cleanup**: Deletes intermediate English SRT files, keeps only Spanish translations
+- Logs all operations to timestamped log file in `logs/` directory
+- Automatically deletes log file on successful completion
+- Keeps log files only when errors occur (for debugging)
 - Tracks success/failure for each file
 - Progress bars for batch processing
 
@@ -58,7 +61,7 @@ python pipeline.py /path/to/folder --dry-run
 - `-b, --subtitle`: Subtitle track index  
 - `-y, --video`: Video track index
 - `--no-recursive`: Only process current folder
-- `--log-file`: Custom log file path (default: `pipeline_YYYYMMDD_HHMMSS.log`)
+- `--log-file`: Custom log file path (default: `logs/pipeline_YYYYMMDD_HHMMSS.log`)
 - `--dry-run`: Preview which MKV files will be processed without actually processing them
 
 ---

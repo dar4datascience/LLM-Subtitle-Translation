@@ -12,9 +12,9 @@ MODEL_NAME = "facebook/nllb-200-distilled-600M"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, src_lang="eng_Latn")
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
 
-# NLLB language codes
-SRC_LANG = "eng_Latn"  # English
-TGT_LANG = "spa_Latn"  # Spanish
+# NLLB language codes (defaults)
+DEFAULT_SRC_LANG = "eng_Latn"  # English
+DEFAULT_TGT_LANG = "spa_Latn"  # Spanish (generic - covers both Spain and Latin America)
 
 # -------------------------------
 # Step 1 — Helper: Translate text
