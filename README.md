@@ -22,7 +22,50 @@ curl -L https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata 
 
 ## Usage
 
-### 1. Extract Subtitles from MKV
+### Complete Pipeline (Recommended)
+
+Use `pipeline.py` to extract and translate in one step:
+
+```bash
+# Single file
+python pipeline.py /path/to/file.mkv
+
+# Folder (recursive by default)
+python pipeline.py /path/to/folder
+
+# With track selection
+python pipeline.py /path/to/file.mkv -a 0 -b 2 -y 0
+
+# Only current folder, no subdirectories
+python pipeline.py /path/to/folder --no-recursive
+
+# Custom log file
+python pipeline.py /path/to/folder --log-file my_process.log
+
+# Preview files without processing (dry run)
+python pipeline.py /path/to/folder --dry-run
+```
+
+**Features:**
+- Extracts PGS subtitles from MKV → SRT
+- Translates English → Spanish automatically
+- Logs all operations to timestamped log file
+- Tracks success/failure for each file
+- Progress bars for batch processing
+
+**Options:**
+- `-a, --audio`: Audio track index
+- `-b, --subtitle`: Subtitle track index  
+- `-y, --video`: Video track index
+- `--no-recursive`: Only process current folder
+- `--log-file`: Custom log file path (default: `pipeline_YYYYMMDD_HHMMSS.log`)
+- `--dry-run`: Preview which MKV files will be processed without actually processing them
+
+---
+
+### Individual Steps (Advanced)
+
+#### 1. Extract Subtitles from MKV
 
 ```bash
 # Single file
@@ -47,7 +90,7 @@ python batch_pgstrip.py /path/to/folder -a 0 -b 2 -y 0 --no-recursive
 - `-y, --video`: Video track index
 - `--no-recursive`: Only process current folder, skip subdirectories
 
-### 2. Translate SRT Files
+#### 2. Translate SRT Files
 
 ```bash
 # Single file

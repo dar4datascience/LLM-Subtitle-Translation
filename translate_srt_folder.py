@@ -26,7 +26,7 @@ def translate_text(lines):
     """
     tokenizer.src_lang = SRC_LANG
     batch = tokenizer(lines, return_tensors="pt", padding=True)
-    forced_bos_token_id = tokenizer.lang_code_to_id[TGT_LANG]
+    forced_bos_token_id = tokenizer.convert_tokens_to_ids(TGT_LANG)
     translated_tokens = model.generate(**batch, forced_bos_token_id=forced_bos_token_id)
     translated = [tokenizer.decode(t, skip_special_tokens=True) for t in translated_tokens]
     return translated
@@ -37,9 +37,13 @@ def translate_text(lines):
 def translate_srt_file(srt_path: Path):
     """
     Reads an SRT file, translates each subtitle text line,
-    and writes a new file with '_es.srt' suffix.
+    and writes a new file with '.es.srt' suffix.
     """
-    output_path = srt_path.with_name(srt_path.stem + ".es.srt")
+    # Remove .en from stem if present, then add .es.srt
+    stem = srt_path.stem
+    if stem.endswith('.en'):
+        stem = stem[:-3]  # Remove last 3 chars (.en)
+    output_path = srt_path.with_name(stem + ".es.srt")
     print(f"Translating {srt_path} → {output_path}")
 
     lines_to_translate = []
