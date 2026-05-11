@@ -10,6 +10,7 @@ from datetime import datetime
 import sys
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from tqdm import tqdm
+from subtitle_extractor import extract_subtitle
 
 # -------------------------------
 # Setup Logging
@@ -44,40 +45,37 @@ def load_translation_model():
 # -------------------------------
 # Step 1: Extract Subtitles
 # -------------------------------
-def extract_subtitles(mkv_path: Path, track_a=None, track_b=None, track_y=None):
+def extract_subtitles(mkv_path: Path, track_a=None, track_b=None, track_y=None, interactive=True):
     """
-    Extract PGS subtitles from MKV file using pgsrip.
+    Extract subtitles from MKV file using auto-detection.
+    Supports both text-based (SRT, ASS) and image-based (PGS, VobSub) formats.
     Returns Path to generated SRT file or None if failed.
+    
+    Args:
+        mkv_path: Path to video file
+        track_a: Audio track index (for pgsrip)
+        track_b: Subtitle track index (auto-select this track)
+        track_y: Video track index (for pgsrip)
+        interactive: If True, prompt for track selection when multiple tracks exist
     """
     logging.info(f"Extracting subtitles from: {mkv_path}")
     
-    cmd = [sys.executable, "-m", "pgsrip", str(mkv_path)]
-    
-    if track_a is not None:
-        cmd.extend(["-a", str(track_a)])
-    if track_b is not None:
-        cmd.extend(["-b", str(track_b)])
-    if track_y is not None:
-        cmd.extend(["-y", str(track_y)])
-    
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        srt_path = extract_subtitle(
+            mkv_path,
+            subtitle_track_index=track_b,
+            track_a=track_a,
+            track_y=track_y,
+            interactive=interactive
+        )
         
-        # Find generated SRT file
-        srt_path = mkv_path.with_suffix('.en.srt')
-        if srt_path.exists():
+        if srt_path:
             logging.info(f"✅ Extracted subtitles: {srt_path}")
             return srt_path
         else:
-            # Try without language suffix
-            srt_path = mkv_path.with_suffix('.srt')
-            if srt_path.exists():
-                logging.info(f"✅ Extracted subtitles: {srt_path}")
-                return srt_path
-            else:
-                logging.error(f"❌ SRT file not found after extraction: {mkv_path}")
-                return None
-    except subprocess.CalledProcessError as e:
+            logging.error(f"❌ Failed to extract subtitles from {mkv_path}")
+            return None
+    except Exception as e:
         logging.error(f"❌ Failed to extract subtitles from {mkv_path}: {e}")
         return None
 
@@ -169,18 +167,19 @@ def translate_srt(srt_path: Path, tokenizer, model, batch_size=50):
 # -------------------------------
 # Step 3: Process Pipeline
 # -------------------------------
-def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=None, track_y=None, batch_size=50):
+def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=None, track_y=None, batch_size=50, interactive=True):
     """
     Full pipeline: Extract subtitles from MKV and translate to Spanish.
     Returns tuple (success: bool, srt_path, translated_path)
     
     Args:
         batch_size: Number of subtitle blocks to translate per batch
+        interactive: If True, prompt for subtitle track selection
     """
     logging.info(f"Processing MKV: {mkv_path}")
     
     # Step 1: Extract
-    srt_path = extract_subtitles(mkv_path, track_a, track_b, track_y)
+    srt_path = extract_subtitles(mkv_path, track_a, track_b, track_y, interactive=interactive)
     if not srt_path:
         return (False, None, None)
     
@@ -202,13 +201,14 @@ def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=Non
     
     return (True, None, translated_path)
 
-def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None, track_b=None, track_y=None, batch_size=50):
+def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None, track_b=None, track_y=None, batch_size=50, interactive=True):
     """
     Process all MKV files in folder.
     Returns summary dict with success/failure counts.
     
     Args:
         batch_size: Number of subtitle blocks to translate per batch
+        interactive: If True, prompt for subtitle selection on first file only
     """
     if recursive:
         mkv_files = list(folder.rglob("*.mkv"))
@@ -223,10 +223,19 @@ def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None,
     
     results = {"total": len(mkv_files), "success": 0, "failed": 0, "files": []}
     
+    # For batch processing: interactive only on first file, then use same track
+    first_file = True
+    
     for mkv in tqdm(mkv_files, desc="Processing MKV files"):
+        # Interactive mode only for first file in batch (unless track_b specified)
+        use_interactive = interactive and first_file and track_b is None
+        
         success, srt_path, translated_path = process_mkv_file(
-            mkv, tokenizer, model, track_a, track_b, track_y, batch_size=batch_size
+            mkv, tokenizer, model, track_a, track_b, track_y, 
+            batch_size=batch_size, interactive=use_interactive
         )
+        
+        first_file = False
         
         if success:
             results["success"] += 1
@@ -279,6 +288,11 @@ if __name__ == "__main__":
         type=int,
         default=50,
         help="Number of subtitle blocks to translate per batch (default: 50, lower = less memory)"
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Disable interactive subtitle track selection (use first track or -b index)"
     )
     
     args = parser.parse_args()
@@ -349,7 +363,8 @@ if __name__ == "__main__":
         success, srt_path, translated_path = process_mkv_file(
             input_path, tokenizer, model,
             args.audio, args.subtitle, args.video,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            interactive=not args.no_interactive
         )
         
         if success:
@@ -375,7 +390,8 @@ if __name__ == "__main__":
             track_a=args.audio,
             track_b=args.subtitle,
             track_y=args.video,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            interactive=not args.no_interactive
         )
         
         logging.info("="*60)
