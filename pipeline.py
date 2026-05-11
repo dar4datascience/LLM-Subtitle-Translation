@@ -169,11 +169,15 @@ def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=Non
         return (False, srt_path, None)
     
     # Step 3: Clean up - delete original English SRT
-    try:
-        srt_path.unlink()
-        logging.info(f"Deleted original SRT: {srt_path}")
-    except Exception as e:
-        logging.warning(f"Could not delete original SRT {srt_path}: {e}")
+    # Safety check: only delete .srt files, never video files
+    if srt_path and srt_path.suffix.lower() == '.srt':
+        try:
+            srt_path.unlink()
+            logging.info(f"Deleted original SRT: {srt_path}")
+        except Exception as e:
+            logging.warning(f"Could not delete original SRT {srt_path}: {e}")
+    else:
+        logging.warning(f"Skipped deletion - not an SRT file: {srt_path}")
     
     return (True, None, translated_path)
 
