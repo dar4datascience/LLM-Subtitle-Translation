@@ -68,7 +68,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Extract PGS subtitles from MKV files using pgsrip"
     )
-    parser.add_argument("folder", type=str, help="Folder containing MKV files")
+    parser.add_argument("path", type=str, help="MKV file or folder containing MKV files")
     parser.add_argument("-a", "--audio", type=int, help="Audio track index")
     parser.add_argument("-b", "--subtitle", type=int, help="Subtitle track index")
     parser.add_argument("-y", "--video", type=int, help="Video track index")
@@ -80,15 +80,21 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    folder_path = Path(args.folder)
-    if not folder_path.is_dir():
-        print(f"{folder_path} is not a valid folder.")
+    input_path = Path(args.path)
+    
+    if input_path.is_file():
+        if input_path.suffix.lower() != ".mkv":
+            print(f"{input_path} is not an MKV file.")
+            sys.exit(1)
+        run_pgstrip(input_path, args.audio, args.subtitle, args.video)
+    elif input_path.is_dir():
+        process_folder(
+            input_path,
+            recursive=not args.no_recursive,
+            track_a=args.audio,
+            track_b=args.subtitle,
+            track_y=args.video
+        )
+    else:
+        print(f"{input_path} is not a valid file or folder.")
         sys.exit(1)
-
-    process_folder(
-        folder_path,
-        recursive=not args.no_recursive,
-        track_a=args.audio,
-        track_b=args.subtitle,
-        track_y=args.video
-    )
