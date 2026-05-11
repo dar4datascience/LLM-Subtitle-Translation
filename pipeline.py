@@ -93,16 +93,25 @@ def translate_text(lines, tokenizer, model):
     translated = [tokenizer.decode(t, skip_special_tokens=True) for t in translated_tokens]
     return translated
 
-def translate_srt(srt_path: Path, tokenizer, model):
+def translate_srt(srt_path: Path, tokenizer, model, batch_size=50):
     """
     Translate SRT file from English to Spanish.
     Returns Path to translated file or None if failed.
+    
+    Args:
+        batch_size: Number of subtitle blocks to translate per batch (default: 50)
     """
     # Remove .en from stem if present, then add .es.srt
     stem = srt_path.stem
     if stem.endswith('.en'):
         stem = stem[:-3]  # Remove last 3 chars (.en)
     output_path = srt_path.with_name(stem + ".es.srt")
+    
+    # Skip if already translated
+    if output_path.exists():
+        logging.info(f"⏭️  Skipping (already exists): {output_path}")
+        return output_path
+    
     logging.info(f"Translating: {srt_path} → {output_path}")
     
     try:
@@ -131,8 +140,17 @@ def translate_srt(srt_path: Path, tokenizer, model):
                 text_lines.append(l)
             lines_to_translate.append(" ".join(text_lines))
         
-        # Translate all at once
-        translated_lines = translate_text(lines_to_translate, tokenizer, model)
+        # Translate in batches to avoid OOM
+        translated_lines = []
+        total_batches = (len(lines_to_translate) + batch_size - 1) // batch_size
+        logging.info(f"Translating {len(lines_to_translate)} subtitles in {total_batches} batch(es) of {batch_size}")
+        
+        for i in range(0, len(lines_to_translate), batch_size):
+            batch = lines_to_translate[i:i+batch_size]
+            batch_num = i // batch_size + 1
+            logging.info(f"  Batch {batch_num}/{total_batches}: {len(batch)} subtitles")
+            translated_batch = translate_text(batch, tokenizer, model)
+            translated_lines.extend(translated_batch)
         
         # Write translated SRT
         with open(output_path, "w", encoding="utf-8") as f:
@@ -151,10 +169,13 @@ def translate_srt(srt_path: Path, tokenizer, model):
 # -------------------------------
 # Step 3: Process Pipeline
 # -------------------------------
-def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=None, track_y=None):
+def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=None, track_y=None, batch_size=50):
     """
     Full pipeline: Extract subtitles from MKV and translate to Spanish.
     Returns tuple (success: bool, srt_path, translated_path)
+    
+    Args:
+        batch_size: Number of subtitle blocks to translate per batch
     """
     logging.info(f"Processing MKV: {mkv_path}")
     
@@ -164,7 +185,7 @@ def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=Non
         return (False, None, None)
     
     # Step 2: Translate
-    translated_path = translate_srt(srt_path, tokenizer, model)
+    translated_path = translate_srt(srt_path, tokenizer, model, batch_size=batch_size)
     if not translated_path:
         return (False, srt_path, None)
     
@@ -181,10 +202,13 @@ def process_mkv_file(mkv_path: Path, tokenizer, model, track_a=None, track_b=Non
     
     return (True, None, translated_path)
 
-def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None, track_b=None, track_y=None):
+def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None, track_b=None, track_y=None, batch_size=50):
     """
     Process all MKV files in folder.
     Returns summary dict with success/failure counts.
+    
+    Args:
+        batch_size: Number of subtitle blocks to translate per batch
     """
     if recursive:
         mkv_files = list(folder.rglob("*.mkv"))
@@ -201,7 +225,7 @@ def process_folder(folder: Path, tokenizer, model, recursive=True, track_a=None,
     
     for mkv in tqdm(mkv_files, desc="Processing MKV files"):
         success, srt_path, translated_path = process_mkv_file(
-            mkv, tokenizer, model, track_a, track_b, track_y
+            mkv, tokenizer, model, track_a, track_b, track_y, batch_size=batch_size
         )
         
         if success:
@@ -249,6 +273,12 @@ if __name__ == "__main__":
         "--dry-run",
         action="store_true",
         help="Preview which MKV files will be processed without actually processing them"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="Number of subtitle blocks to translate per batch (default: 50, lower = less memory)"
     )
     
     args = parser.parse_args()
@@ -318,7 +348,8 @@ if __name__ == "__main__":
         
         success, srt_path, translated_path = process_mkv_file(
             input_path, tokenizer, model,
-            args.audio, args.subtitle, args.video
+            args.audio, args.subtitle, args.video,
+            batch_size=args.batch_size
         )
         
         if success:
@@ -343,7 +374,8 @@ if __name__ == "__main__":
             recursive=not args.no_recursive,
             track_a=args.audio,
             track_b=args.subtitle,
-            track_y=args.video
+            track_y=args.video,
+            batch_size=args.batch_size
         )
         
         logging.info("="*60)
