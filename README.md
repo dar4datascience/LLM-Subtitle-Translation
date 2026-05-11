@@ -25,8 +25,24 @@ curl -L https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata 
 ### 1. Extract Subtitles from MKV
 
 ```bash
+# Basic usage (recursive by default)
 python batch_pgstrip.py /path/to/folder/with/mkv/files
+
+# With track selection
+python batch_pgstrip.py /path/to/folder -a 0 -b 2 -y 0
+
+# Only current folder, no subdirectories
+python batch_pgstrip.py /path/to/folder --no-recursive
+
+# Full options
+python batch_pgstrip.py /path/to/folder -a 0 -b 2 -y 0 --no-recursive
 ```
+
+**Options:**
+- `-a, --audio`: Audio track index
+- `-b, --subtitle`: Subtitle track index  
+- `-y, --video`: Video track index
+- `--no-recursive`: Only process current folder, skip subdirectories
 
 ### 2. Translate SRT Files
 
