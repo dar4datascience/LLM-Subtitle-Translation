@@ -151,18 +151,10 @@ def extract_subtitle_pgsrip(video_path: Path, track: SubtitleTrack, track_a=None
     
     print(f"Extracting {track.codec} subtitle with OCR from track {track.index}...")
     
-    cmd = [sys.executable, "-m", "pgsrip", str(video_path)]
-    
-    # pgsrip uses -b for subtitle track
-    cmd.extend(["-b", str(track.index)])
-    
-    if track_a is not None:
-        cmd.extend(["-a", str(track_a)])
-    if track_y is not None:
-        cmd.extend(["-y", str(track_y)])
+    cmd = [sys.executable, "-m", "pgsrip", "-v", str(video_path)]
     
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, text=True)
         
         # Check for generated file
         if output_path.exists():
@@ -176,9 +168,13 @@ def extract_subtitle_pgsrip(video_path: Path, track: SubtitleTrack, track_a=None
                 return alt_path
             else:
                 print(f"❌ SRT file not found after extraction")
+                print(f"pgsrip stdout: {result.stdout}")
+                print(f"pgsrip stderr: {result.stderr}")
                 return None
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to extract subtitle: {e}")
+        print(f"pgsrip stderr: {e.stderr}")
+        print(f"pgsrip stdout: {e.stdout}")
         return None
 
 def extract_subtitle(video_path: Path, subtitle_track_index: Optional[int] = None, 

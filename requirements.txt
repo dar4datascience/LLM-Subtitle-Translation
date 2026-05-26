@@ -4,3 +4,5 @@ sentencepiece>=0.1.99
 protobuf>=3.20.0
 tqdm>=4.65.0
 pgsrip>=0.1.12
+langdetect>=1.0.9
+langid>=1.1.6

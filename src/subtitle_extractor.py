@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+import os
+os.environ["TESSDATA_PREFIX"] = os.path.expanduser("~/tessdata_best")
+
+import subprocess
+import json
+import sys
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple
+
+
+class SubtitleTrack:
+    def __init__(self, index: int, codec: str, language: str = "und"):
+        self.index = index
+        self.codec = codec
+        self.language = language
+    
+    def __repr__(self):
+        return f"Track {self.index}: {self.codec} ({self.language})"
+    
+    @property
+    def is_text_based(self) -> bool:
+        text_codecs = ['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text']
+        return self.codec.lower() in text_codecs
+    
+    @property
+    def is_image_based(self) -> bool:
+        image_codecs = ['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvdsub', 'vobsub']
+        return self.codec.lower() in image_codecs
+
+
+class SubtitleExtractor:
+    """Extract subtitles from video files (text-based and image-based formats)."""
+    
+    @staticmethod
+    def detect_tracks(video_path: Path) -> List[SubtitleTrack]:
+        """
+        Detect all subtitle tracks in video file using ffprobe.
+        
+        Args:
+            video_path: Path to video file
+            
+        Returns:
+            List of SubtitleTrack objects
+        """
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-select_streams', 's',
+            '-show_entries', 'stream=index,codec_name:stream_tags=language',
+            '-of', 'json',
+            str(video_path)
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            
+            tracks = []
+            for stream in data.get('streams', []):
+                index = stream.get('index')
+                codec = stream.get('codec_name', 'unknown')
+                language = stream.get('tags', {}).get('language', 'und')
+                tracks.append(SubtitleTrack(index, codec, language))
+            
+            return tracks
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"Error detecting subtitle tracks: {e}")
+            return []
+    
+    @staticmethod
+    def select_track(tracks: List[SubtitleTrack], auto_select: Optional[int] = None) -> Optional[SubtitleTrack]:
+        """
+        Interactive subtitle track selection.
+        
+        Args:
+            tracks: List of available subtitle tracks
+            auto_select: If provided, auto-select this track index
+            
+        Returns:
+            Selected SubtitleTrack or None
+        """
+        if not tracks:
+            print("No subtitle tracks found")
+            return None
+        
+        if len(tracks) == 1:
+            print(f"Found 1 subtitle track: {tracks[0]}")
+            return tracks[0]
+        
+        if auto_select is not None:
+            for track in tracks:
+                if track.index == auto_select:
+                    print(f"Auto-selected: {track}")
+                    return track
+            print(f"Warning: Track index {auto_select} not found, falling back to interactive selection")
+        
+        print(f"\nFound {len(tracks)} subtitle tracks:")
+        for i, track in enumerate(tracks):
+            format_type = "text-based" if track.is_text_based else "image-based (OCR)"
+            print(f"  {i+1}. {track} - {format_type}")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect track (1-{len(tracks)}) or 'q' to skip: ").strip()
+                if choice.lower() == 'q':
+                    return None
+                
+                idx = int(choice) - 1
+                if 0 <= idx < len(tracks):
+                    return tracks[idx]
+                else:
+                    print(f"Invalid choice. Enter 1-{len(tracks)}")
+            except (ValueError, KeyboardInterrupt):
+                print("\nSkipping subtitle extraction")
+                return None
+    
+    @staticmethod
+    def extract_text_based(video_path: Path, track: SubtitleTrack, output_path: Optional[Path] = None) -> Optional[Path]:
+        """
+        Extract text-based subtitle using ffmpeg.
+        
+        Args:
+            video_path: Path to video file
+            track: SubtitleTrack to extract
+            output_path: Output SRT path (auto-generated if None)
+            
+        Returns:
+            Path to extracted SRT file or None if failed
+        """
+        if output_path is None:
+            output_path = video_path.with_suffix('.srt')
+        
+        if output_path.exists():
+            print(f"Subtitle already exists: {output_path}")
+            return output_path
+        
+        print(f"Extracting {track.codec} subtitle from track {track.index}...")
+        
+        cmd = [
+            'ffmpeg',
+            '-i', str(video_path),
+            '-map', f'0:{track.index}',
+            '-c:s', 'srt',
+            str(output_path)
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            print(f"✅ Extracted: {output_path}")
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to extract subtitle: {e}")
+            return None
+    
+    @staticmethod
+    def extract_image_based(video_path: Path, track: SubtitleTrack, output_path: Optional[Path] = None,
+                          track_a: Optional[int] = None, track_y: Optional[int] = None) -> Optional[Path]:
+        """
+        Extract image-based subtitle using pgsrip (with OCR).
+        
+        Args:
+            video_path: Path to video file
+            track: SubtitleTrack to extract
+            output_path: Output SRT path (auto-generated if None)
+            track_a: Audio track index (for pgsrip)
+            track_y: Video track index (for pgsrip)
+            
+        Returns:
+            Path to extracted SRT file or None if failed
+        """
+        if output_path is None:
+            output_path = video_path.with_suffix('.srt')
+        
+        if output_path.exists():
+            print(f"Subtitle already exists: {output_path}")
+            return output_path
+        
+        print(f"Extracting {track.codec} subtitle with OCR from track {track.index}...")
+        
+        cmd = [sys.executable, "-m", "pgsrip", "-v", str(video_path)]
+        
+        try:
+            result = subprocess.run(cmd, check=True, text=True)
+            
+            if output_path.exists():
+                print(f"✅ Extracted: {output_path}")
+                return output_path
+            else:
+                alt_path = video_path.with_suffix('.en.srt')
+                if alt_path.exists():
+                    print(f"✅ Extracted: {alt_path}")
+                    return alt_path
+                else:
+                    print(f"❌ SRT file not found after extraction")
+                    return None
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to extract subtitle: {e}")
+            return None
+    
+    @staticmethod
+    def extract(video_path: Path, subtitle_track_index: Optional[int] = None,
+               track_a: Optional[int] = None, track_y: Optional[int] = None,
+               interactive: bool = True, output_path: Optional[Path] = None) -> Optional[Path]:
+        """
+        Main extraction function. Auto-detects format and uses appropriate extractor.
+        
+        Args:
+            video_path: Path to video file
+            subtitle_track_index: Optional subtitle track index for auto-selection
+            track_a: Audio track index (for pgsrip)
+            track_y: Video track index (for pgsrip)
+            interactive: If True, prompt user for track selection
+            output_path: Optional output path for SRT file
+            
+        Returns:
+            Path to extracted SRT file or None
+        """
+        print(f"\nProcessing: {video_path}")
+        
+        tracks = SubtitleExtractor.detect_tracks(video_path)
+        if not tracks:
+            print("No subtitle tracks found")
+            return None
+        
+        if interactive:
+            selected_track = SubtitleExtractor.select_track(tracks, auto_select=subtitle_track_index)
+        else:
+            if subtitle_track_index is not None:
+                selected_track = next((t for t in tracks if t.index == subtitle_track_index), None)
+                if not selected_track:
+                    print(f"Track {subtitle_track_index} not found, using first track")
+                    selected_track = tracks[0]
+            else:
+                selected_track = tracks[0]
+            print(f"Using: {selected_track}")
+        
+        if not selected_track:
+            return None
+        
+        if selected_track.is_text_based:
+            return SubtitleExtractor.extract_text_based(video_path, selected_track, output_path)
+        elif selected_track.is_image_based:
+            return SubtitleExtractor.extract_image_based(video_path, selected_track, output_path, track_a, track_y)
+        else:
+            print(f"Unsupported subtitle codec: {selected_track.codec}")
+            return None

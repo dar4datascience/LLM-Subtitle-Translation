@@ -1,134 +1,505 @@
 # LLM Subtitle Translation
 
-Extract subtitles from video files and translate EN→ES using NLLB-200.
+Video processing toolkit for subtitle extraction/translation and audio track management. Extract subtitles (text/image-based) with automatic language detection, translate using NLLB-200, and manage audio tracks for Jellyfin/media servers.
 
-**Supports multiple subtitle formats:**
-- **Text-based** (fast, direct copy): SRT, ASS, SSA, WebVTT
-- **Image-based** (OCR required): PGS (Blu-ray), VobSub (DVD)
+## Features
 
-## Setup
+- **Subtitle Extraction**: Text-based (SRT, ASS, WebVTT) and image-based (PGS, VobSub) with OCR
+- **Language Detection**: Auto-detect subtitle language using langdetect/langid
+- **Translation**: English → Spanish using NLLB-200 (600M model)
+- **Audio Management**: Extract, merge, and convert audio tracks
+- **Batch Processing**: Process entire folders with progress tracking
+- **Jellyfin Optimized**: Audio format recommendations for streaming servers
+
+## Architecture
+
+### Repository Structure
+
+```
+LLM-Subtitle-Translation/
+├── src/                          # Core classes
+│   ├── audio_manager.py          # Audio extraction/merging
+│   ├── language_detector.py      # Subtitle language detection
+│   ├── subtitle_extractor.py     # Subtitle extraction (text/image)
+│   ├── translator.py             # NLLB-200 translation
+│   └── video_processor.py        # High-level coordinator
+├── scripts/                      # CLI entry points
+│   ├── extract_audio.py          # Extract audio tracks
+│   ├── merge_audio.py            # Merge audio into video
+│   ├── extract_subtitles.py      # Extract + detect language
+│   ├── batch_extract.py          # Batch subtitle extraction
+│   ├── translate_srt_folder.py   # Batch translation
+│   └── pipeline.py               # Complete pipeline
+├── requirements.txt
+├── README.md
+└── venv/
+```
+
+### Pipeline Diagrams
+
+#### Subtitle Extraction & Translation Pipeline
+
+```
+┌─────────────┐
+│  Video File │
+│   (.mkv)    │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Detect Subtitle Tracks         │
+│  (ffprobe)                      │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Select Track (interactive)     │
+└──────┬──────────────────────────┘
+       │
+       ├─── Text-based? ──────────┐
+       │    (SRT/ASS/WebVTT)      │
+       │                          ▼
+       │                   ┌──────────────┐
+       │                   │   ffmpeg     │
+       │                   │   extract    │
+       │                   └──────┬───────┘
+       │                          │
+       ├─── Image-based? ─────────┤
+       │    (PGS/VobSub)          │
+       │                          ▼
+       │                   ┌──────────────┐
+       │                   │   pgsrip     │
+       │                   │   + OCR      │
+       │                   └──────┬───────┘
+       │                          │
+       ▼                          ▼
+┌─────────────────────────────────┐
+│  Raw Subtitle (.srt)            │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Language Detection             │
+│  (langdetect/langid)            │
+│  - Analyze text content         │
+│  - Check confidence (>70%)      │
+│  - Tag with ISO 639-2 code      │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Tagged Subtitle                │
+│  (video.eng.srt)                │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Translation (NLLB-200)         │
+│  - Batch processing (50 blocks) │
+│  - EN → ES                      │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Translated Subtitle            │
+│  (video.es.srt)                 │
+└─────────────────────────────────┘
+```
+
+#### Audio Extraction Pipeline
+
+```
+┌─────────────┐
+│  Video File │
+│   (.mkv)    │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  List Audio Tracks              │
+│  (ffprobe)                      │
+│  - Track index                  │
+│  - Codec (AAC/MP3/FLAC/etc)     │
+│  - Language                     │
+│  - Bitrate/Channels             │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Select Track (interactive)     │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Extract Audio (ffmpeg)         │
+│  - Copy codec (no re-encode)    │
+│  - OR convert to AAC/MP3        │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Audio File                     │
+│  (video_audio_track1.aac)       │
+└─────────────────────────────────┘
+```
+
+#### Audio Merging Pipeline
+
+```
+┌─────────────┐      ┌─────────────┐
+│  Video File │      │ Audio File  │
+│   (.mkv)    │      │   (.aac)    │
+└──────┬──────┘      └──────┬──────┘
+       │                    │
+       └────────┬───────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Merge Strategy?                │
+├─────────────────────────────────┤
+│  1. Add (keep all tracks)       │
+│  2. Replace (remove original)   │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Merge Audio (ffmpeg)           │
+│  - Map video stream             │
+│  - Map audio streams            │
+│  - Copy codecs (no re-encode)   │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Output Video                   │
+│  (video_merged.mkv)             │
+│  - Multiple audio tracks        │
+│  - Selectable in player         │
+└─────────────────────────────────┘
+```
+
+## Quick Start
+
+### Installation
 
 ```bash
-# Activate venv
+# Activate virtual environment
 source venv/bin/activate
 
-# Install Python deps
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Install Tesseract OCR (system package)
+# Install system dependencies
 # Ubuntu/Debian:
-sudo apt install tesseract-ocr
+sudo apt install tesseract-ocr ffmpeg
 
-# Download tessdata_best for better OCR
+# Download Tesseract best models (for OCR)
 mkdir -p ~/tessdata_best
 curl -L https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata -o ~/tessdata_best/eng.traineddata
 ```
 
-## Usage
+### Basic Usage
 
-### Complete Pipeline (Recommended)
+```bash
+# Complete pipeline (extract + translate)
+python scripts/pipeline.py /path/to/video.mkv
 
-Use `pipeline.py` to extract and translate in one step:
+# Extract audio from video
+python scripts/extract_audio.py /path/to/video.mkv
+
+# Merge audio into video
+python scripts/merge_audio.py video.mkv audio.aac -o output.mkv
+
+# Extract subtitles with language detection
+python scripts/extract_subtitles.py /path/to/video.mkv
+```
+
+## Usage Guide
+
+### Complete Subtitle Pipeline
+
+Use `pipeline.py` for full extraction and translation:
 
 ```bash
 # Single file
-python pipeline.py /path/to/file.mkv
+python scripts/pipeline.py /path/to/file.mkv
 
 # Folder (recursive by default)
-python pipeline.py /path/to/folder
+python scripts/pipeline.py /path/to/folder
 
 # With track selection
-python pipeline.py /path/to/file.mkv -a 0 -b 2 -y 0
+python scripts/pipeline.py /path/to/file.mkv -b 2
 
-# Only current folder, no subdirectories
-python pipeline.py /path/to/folder --no-recursive
-
-# Custom log file
-python pipeline.py /path/to/folder --log-file my_process.log
-
-# Preview files without processing (dry run)
-python pipeline.py /path/to/folder --dry-run
+# Preview files (dry run)
+python scripts/pipeline.py /path/to/folder --dry-run
 ```
-
-**Features:**
-- **Auto-detects** subtitle format (text vs image-based)
-- **Interactive selection** when multiple subtitle tracks available
-- Extracts subtitles from MKV → SRT (uses ffmpeg for text, pgsrip+OCR for images)
-- Translates English → Spanish automatically
-- **Auto-cleanup**: Deletes intermediate English SRT files, keeps only Spanish translations
-- Logs all operations to timestamped log file in `logs/` directory
-- Automatically deletes log file on successful completion
-- Keeps log files only when errors occur (for debugging)
-- Tracks success/failure for each file
-- Progress bars for batch processing
 
 **Options:**
 - `-a, --audio`: Audio track index (for pgsrip)
-- `-b, --subtitle`: Subtitle track index (auto-select this track)
+- `-b, --subtitle`: Subtitle track index (auto-select)
 - `-y, --video`: Video track index (for pgsrip)
 - `--no-recursive`: Only process current folder
-- `--no-interactive`: Disable interactive track selection (use first track or -b index)
-- `--log-file`: Custom log file path (default: `logs/pipeline_YYYYMMDD_HHMMSS.log`)
-- `--dry-run`: Preview which MKV files will be processed without actually processing them
-- `--batch-size`: Subtitle blocks per batch (default: 50, lower = less memory)
-
----
-
-### Individual Steps (Advanced)
-
-#### 1. Extract Subtitles from MKV
-
-```bash
-# Single file (interactive track selection)
-python batch_extract.py /path/to/file.mkv
-
-# Folder (recursive by default)
-python batch_extract.py /path/to/folder/with/mkv/files
-
-# With track selection (auto-select subtitle track 2)
-python batch_extract.py /path/to/file.mkv -s 2
-
-# Non-interactive (use first track)
-python batch_extract.py /path/to/folder --no-interactive
-
-# Only current folder, no subdirectories
-python batch_extract.py /path/to/folder --no-recursive
-```
-
-**Options:**
-- `-a, --audio`: Audio track index (for pgsrip)
-- `-s, --subtitle`: Subtitle track index (auto-select)
-- `-y, --video`: Video track index (for pgsrip)
-- `--no-recursive`: Only process current folder, skip subdirectories
 - `--no-interactive`: Disable interactive track selection
+- `--batch-size`: Subtitle blocks per batch (default: 50)
+- `--dry-run`: Preview files without processing
 
-#### 2. Translate SRT Files
+### Audio Extraction
+
+Extract audio tracks from video files:
 
 ```bash
-# Single file
-python translate_srt_folder.py /path/to/file.srt
+# Extract with interactive track selection
+python scripts/extract_audio.py video.mkv
 
-# Folder (recursive by default)
-python translate_srt_folder.py /path/to/folder/with/srt/files
+# Extract specific track
+python scripts/extract_audio.py video.mkv -t 1
 
-# Only current folder, no subdirectories
-python translate_srt_folder.py /path/to/folder --no-recursive
+# Convert to specific format
+python scripts/extract_audio.py video.mkv -f aac
+
+# Batch extract from folder
+python scripts/extract_audio.py /path/to/videos/ -f aac
 ```
 
-Translates English `.srt` files to Spanish, outputs as `.es.srt`.
+**Options:**
+- `-t, --track`: Audio track index to extract
+- `-o, --output`: Output audio file path
+- `-f, --format`: Convert to format (aac, mp3, flac, opus)
+- `--no-recursive`: Only process current folder
+- `--no-interactive`: Use first track or -t index
+
+### Audio Merging
+
+Merge audio tracks into video files:
+
+```bash
+# Add audio track (keep existing)
+python scripts/merge_audio.py video.mkv audio.aac -o output.mkv
+
+# Replace existing audio
+python scripts/merge_audio.py video.mkv audio.aac -o output.mkv --replace
+
+# Set audio language
+python scripts/merge_audio.py video.mkv audio.aac -l spa
+
+# List available audio tracks
+python scripts/merge_audio.py video.mkv --select-audio
+```
 
 **Options:**
-- `--no-recursive`: Only process current folder, skip subdirectories
+- `-o, --output`: Output video file path
+- `--replace`: Replace existing audio tracks
+- `-l, --language`: Language code for audio track (default: und)
+- `--select-audio`: List tracks without merging
 
-## Model
+### Subtitle Extraction with Language Detection
 
-Uses **facebook/nllb-200-distilled-600M** (600MB)
+Extract subtitles and automatically detect language:
+
+```bash
+# Extract with language detection
+python scripts/extract_subtitles.py video.mkv
+# Output: video.eng.srt (auto-detected)
+
+# Use accurate detection (slower)
+python scripts/extract_subtitles.py video.mkv --accurate
+
+# Skip language detection
+python scripts/extract_subtitles.py video.mkv --no-detect
+
+# Batch process folder
+python scripts/extract_subtitles.py /path/to/videos/
+```
+
+**Options:**
+- `-s, --subtitle`: Subtitle track index
+- `--no-detect`: Skip language detection
+- `--accurate`: Use langid (slower, more accurate)
+- `--no-recursive`: Only process current folder
+- `--no-interactive`: Use first track or -s index
+
+### Individual Tools
+
+#### Extract Subtitles (Legacy)
+
+```bash
+python scripts/batch_extract.py /path/to/file.mkv
+python scripts/batch_extract.py /path/to/folder -s 2
+```
+
+#### Translate SRT Files
+
+```bash
+python scripts/translate_srt_folder.py /path/to/file.srt
+python scripts/translate_srt_folder.py /path/to/folder
+```
+
+## Technical Details
+
+### Language Detection
+
+#### Algorithms
+
+**langdetect** (Default)
+- Based on Nakatani Shuyo's implementation
+- Uses character n-grams (1-3 chars)
+- Supports 55 languages
+- Fast: ~1ms per detection
+- Accuracy: 95% on paragraphs, 80% on sentences
+- Non-deterministic (uses randomization for speed)
+- GitHub: https://github.com/Mimino666/langdetect
+
+**langid** (Optional, via --accurate flag)
+- Based on Lui & Baldwin (2012) research
+- Uses byte n-grams with Naive Bayes classifier
+- Supports 97 languages
+- Slower: ~5-10ms per detection
+- Accuracy: 97% on paragraphs, 85% on sentences
+- Deterministic results
+- GitHub: https://github.com/saffsd/langid.py
+
+#### Implementation Strategy
+
+1. Extract text from first 10 subtitle blocks (min 100 chars)
+2. Run detection algorithm
+3. Check confidence score
+4. If confidence < 70%:
+   - Fall back to video metadata (ffprobe)
+   - If no metadata, use 'und' (undetermined)
+5. Tag output file with ISO 639-2 code
+
+#### Language Detection Flow
+
+```
+┌─────────────────────────────────┐
+│  Subtitle File (.srt)           │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Extract Text Samples           │
+│  - Skip timestamps/numbers      │
+│  - Combine first 10 blocks      │
+│  - Min 100 chars for accuracy   │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│  Language Detection             │
+│  (langdetect or langid)         │
+└──────┬──────────────────────────┘
+       │
+       ├─── Confidence > 70%? ─────┐
+       │                           │
+       │ YES                       │ NO
+       ▼                           ▼
+┌──────────────┐          ┌─────────────────┐
+│ Use Detected │          │ Check Metadata  │
+│ Language     │          │ (ffprobe)       │
+└──────┬───────┘          └────────┬────────┘
+       │                           │
+       │                           ├─── Has lang tag? ───┐
+       │                           │                     │
+       │                           │ YES                 │ NO
+       │                           ▼                     ▼
+       │                  ┌─────────────┐      ┌──────────────┐
+       │                  │ Use Metadata│      │ Use 'und'    │
+       │                  └──────┬──────┘      │ (undetermined)│
+       │                         │             └──────┬───────┘
+       │                         │                    │
+       └─────────────────────────┴────────────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │ Tag Subtitle File       │
+                    │ (video.{lang}.srt)      │
+                    └─────────────────────────┘
+```
+
+#### Supported Language Codes
+
+Common codes: `eng` (English), `spa` (Spanish), `fra` (French), `deu` (German), `ita` (Italian), `por` (Portuguese), `rus` (Russian), `jpn` (Japanese), `kor` (Korean), `zho` (Chinese), `ara` (Arabic)
+
+Full list: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
+
+### Audio Formats
+
+#### Format Comparison for Jellyfin Playback
+
+| Format | Pros | Cons | Use Case | Codec |
+|--------|------|------|----------|-------|
+| **AAC** | Best compatibility, good quality/size, native in MP4/MKV | Lossy compression | **Recommended** for streaming servers | `aac`, `libfdk_aac` |
+| **MP3** | Universal compatibility, smaller files | Lower quality than AAC | Maximum device compatibility | `libmp3lame` |
+| **FLAC** | Lossless (perfect quality), open source | Large files (2-3x AAC) | Archival, audiophile collections | `flac` |
+| **Opus** | Best quality/size ratio, modern | Limited hardware support | Low bitrate streaming, VoIP | `libopus` |
+
+#### Strategy for This Project
+
+- **Extract:** Copy original audio codec (no re-encoding, preserves quality)
+- **Merge:** Keep original format when possible
+- **Convert only if needed:** AAC fallback for compatibility
+- **User choice:** CLI flag for format preference
+
+### Translation Model
+
+**facebook/nllb-200-distilled-600M**
+- 600MB model size
 - Better quality than MarianMT
 - CPU-friendly for Ryzen 7 5825U
 - Supports 200 languages
+- Batch processing to avoid OOM
 
 ## Hardware Requirements
 
 - **CPU**: 8+ cores recommended
 - **RAM**: 8GB minimum, 16GB recommended
-- **Storage**: ~2GB for model + deps
+- **Storage**: ~2GB for model + dependencies
+- **GPU**: Optional (CPU-only works fine)
+
+## API Reference
+
+### Core Classes
+
+#### `AudioManager`
+- `list_audio_tracks(video_path)` - List all audio tracks
+- `extract_audio(video_path, output_path, track_index, convert_to)` - Extract audio
+- `merge_audio(video_path, audio_path, output_path, replace, audio_language)` - Merge audio
+- `select_audio_track(tracks, auto_select)` - Interactive selection
+
+#### `LanguageDetector`
+- `detect_subtitle_language(srt_path, video_path, track_index, use_accurate)` - Detect language
+- `detect_from_text(text, use_accurate)` - Detect from text content
+- `detect_from_metadata(video_path, track_index)` - Get from metadata
+- `tag_subtitle_file(srt_path, lang_code)` - Rename with language tag
+
+#### `SubtitleExtractor`
+- `detect_tracks(video_path)` - Detect subtitle tracks
+- `extract(video_path, subtitle_track_index, interactive)` - Extract subtitle
+- `extract_text_based(video_path, track)` - Extract text subtitle
+- `extract_image_based(video_path, track)` - Extract image subtitle with OCR
+
+#### `Translator`
+- `load_model()` - Load NLLB-200 model
+- `translate_text(lines)` - Translate text lines
+- `translate_srt(srt_path, output_path, batch_size)` - Translate SRT file
+
+#### `VideoProcessor`
+- `process_subtitles(video_path, ...)` - Complete subtitle pipeline
+- `extract_audio_track(video_path, ...)` - Extract audio
+- `merge_audio_track(video_path, audio_path, ...)` - Merge audio
+
+## License
+
+MIT License
+
+## Contributing
+
+Contributions welcome! Please open an issue or PR.
+
+## Acknowledgments
+
+- **NLLB-200**: Meta AI's No Language Left Behind translation model
+- **pgsrip**: PGS subtitle extraction with OCR
+- **Tesseract**: OCR engine
+- **langdetect**: Language detection library
+- **FFmpeg**: Video/audio processing
