@@ -65,7 +65,8 @@ def write_srt(segments: list, output_path: Path):
 
 def generate_subtitles_with_whisper(video_path: Path, model_name: str = "medium",
                                    language: str = "en", output_dir: Path = None,
-                                   device: str = None, fp16: bool = True) -> Path:
+                                   device: str = None, fp16: bool = True,
+                                   skip_existing: bool = True) -> Path:
     """
     Generate subtitles using Whisper Python API with batching.
     
@@ -86,8 +87,11 @@ def generate_subtitles_with_whisper(video_path: Path, model_name: str = "medium"
     expected_srt = output_dir / f"{video_path.stem}.{language}.srt"
     
     if expected_srt.exists():
-        logger.info(f"⏭️  Subtitles already exist: {expected_srt}")
-        return expected_srt
+        if skip_existing:
+            logger.info(f"⏭️  Subtitles already exist: {expected_srt}")
+            return expected_srt
+        else:
+            logger.info(f"📝 Reprocessing existing subtitles: {expected_srt}")
     
     duration = get_video_duration(video_path)
     duration_min = int(duration / 60) if duration > 0 else 0
@@ -141,7 +145,7 @@ def generate_subtitles_with_whisper(video_path: Path, model_name: str = "medium"
 def process_video(video_path: Path, translator: Translator, whisper_model: str = "medium",
                  source_lang: str = "en", translate: bool = True,
                  cleanup_original: bool = False, device: str = None,
-                 fp16: bool = True) -> tuple:
+                 fp16: bool = True, skip_existing: bool = True) -> tuple:
     """
     Complete pipeline: Generate subtitles with Whisper and translate.
     
@@ -165,7 +169,8 @@ def process_video(video_path: Path, translator: Translator, whisper_model: str =
         model_name=whisper_model,
         language=source_lang,
         device=device,
-        fp16=fp16
+        fp16=fp16,
+        skip_existing=skip_existing
     )
     
     if not srt_path:
@@ -194,7 +199,8 @@ def process_video(video_path: Path, translator: Translator, whisper_model: str =
 def process_folder(folder_path: Path, translator: Translator, recursive: bool = True,
                   whisper_model: str = "medium", source_lang: str = "en",
                   translate: bool = True, cleanup_original: bool = False,
-                  extensions: list = None, device: str = None, fp16: bool = True) -> dict:
+                  extensions: list = None, device: str = None, fp16: bool = True,
+                  skip_existing: bool = True) -> dict:
     """
     Process all video files in folder.
     
@@ -225,16 +231,34 @@ def process_folder(folder_path: Path, translator: Translator, recursive: bool = 
     
     if not video_files:
         logger.warning("No video files found")
-        return {"total": 0, "success": 0, "failed": 0}
+        return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+    
+    # Sort videos: files without subtitles first
+    def has_subtitle(video_path):
+        return (video_path.parent / f"{video_path.stem}.{source_lang}.srt").exists()
+    
+    video_files.sort(key=lambda v: has_subtitle(v))
     
     logger.info(f"Found {len(video_files)} video file(s)")
     
-    results = {"total": len(video_files), "success": 0, "failed": 0, "files": []}
+    results = {"total": len(video_files), "success": 0, "failed": 0, "skipped": 0, "files": []}
     
     for video in tqdm(video_files, desc="Processing videos"):
+        expected_srt = video.parent / f"{video.stem}.{source_lang}.srt"
+        if skip_existing and expected_srt.exists():
+            logger.info(f"⏭️  Skipping (subtitle exists): {video}")
+            results["skipped"] += 1
+            results["files"].append({
+                "video": str(video),
+                "status": "skipped",
+                "srt": str(expected_srt),
+                "translated": None
+            })
+            continue
+        
         success, srt_path, translated_path = process_video(
             video, translator, whisper_model, source_lang, translate,
-            cleanup_original, device, fp16
+            cleanup_original, device, fp16, skip_existing
         )
         
         if success:
@@ -304,7 +328,19 @@ if __name__ == "__main__":
         default=["*.mp4", "*.mkv", "*.avi"],
         help="Video file extensions to process (default: mp4 mkv avi)"
     )
-    
+    parser.add_argument(
+        "-s", "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip videos that already have subtitle files (default: True)"
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        dest="skip_existing",
+        action="store_false",
+        help="Reprocess videos even if subtitles already exist"
+    )
+
     args = parser.parse_args()
     
     input_path = Path(args.path)
@@ -331,7 +367,8 @@ if __name__ == "__main__":
             translate=not args.no_translate,
             cleanup_original=args.cleanup,
             device=args.device,
-            fp16=not args.no_fp16
+            fp16=not args.no_fp16,
+            skip_existing=args.skip_existing
         )
         
         if success:
@@ -355,13 +392,15 @@ if __name__ == "__main__":
             cleanup_original=args.cleanup,
             extensions=args.extensions,
             device=args.device,
-            fp16=not args.no_fp16
+            fp16=not args.no_fp16,
+            skip_existing=args.skip_existing
         )
         
         logger.info(f"\n{'='*50}")
         logger.info(f"Processing Summary:")
         logger.info(f"  Total: {results['total']}")
         logger.info(f"  Success: {results['success']}")
+        logger.info(f"  Skipped: {results['skipped']}")
         logger.info(f"  Failed: {results['failed']}")
         logger.info(f"{'='*50}")
         
