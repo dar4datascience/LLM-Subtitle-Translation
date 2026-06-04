@@ -5,8 +5,12 @@ os.environ["TESSDATA_PREFIX"] = os.path.expanduser("~/tessdata_best")
 import subprocess
 import json
 import sys
+import tempfile
+import shutil
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
+
+VOBSUB2SRT_BIN = Path("/tmp/VobSub2SRT-fork/build/bin/vobsub2srt")
 
 class SubtitleTrack:
     def __init__(self, index: int, codec: str, language: str = "und"):
@@ -28,6 +32,16 @@ class SubtitleTrack:
         """Check if subtitle format is image-based (needs OCR)"""
         image_codecs = ['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvdsub', 'vobsub']
         return self.codec.lower() in image_codecs
+    
+    @property
+    def is_vobsub(self) -> bool:
+        """Check if subtitle format is VobSub/DVD subtitle"""
+        return self.codec.lower() in ['dvd_subtitle', 'dvdsub', 'vobsub']
+    
+    @property
+    def is_pgs(self) -> bool:
+        """Check if subtitle format is PGS/Blu-ray subtitle"""
+        return self.codec.lower() == 'hdmv_pgs_subtitle'
 
 def detect_subtitle_tracks(video_path: Path) -> List[SubtitleTrack]:
     """
@@ -177,6 +191,75 @@ def extract_subtitle_pgsrip(video_path: Path, track: SubtitleTrack, track_a=None
         print(f"pgsrip stdout: {e.stdout}")
         return None
 
+def extract_subtitle_vobsub(video_path: Path, track: SubtitleTrack, output_path: Optional[Path] = None) -> Optional[Path]:
+    """
+    Extract VobSub (dvd_subtitle) track using ffmpeg -> mkvextract -> vobsub2srt.
+    Returns path to extracted SRT file or None if failed.
+    """
+    if output_path is None:
+        output_path = video_path.with_suffix('.en.srt')
+    
+    if output_path.exists():
+        print(f"Subtitle already exists: {output_path}")
+        return output_path
+    
+    if not VOBSUB2SRT_BIN.exists():
+        print(f"❌ vobsub2srt not found at {VOBSUB2SRT_BIN}")
+        return None
+    
+    print(f"Extracting {track.codec} subtitle via VobSub OCR from track {track.index}...")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        temp_mkv = tmp_path / "subtitles.mkv"
+        base_name = tmp_path / "extracted"
+        
+        # Step 1: Remux subtitle track to MKV
+        cmd_remux = [
+            'ffmpeg', '-y', '-i', str(video_path),
+            '-map', f'0:{track.index}',
+            '-c:s', 'copy',
+            str(temp_mkv)
+        ]
+        try:
+            subprocess.run(cmd_remux, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to remux subtitle to MKV: {e}")
+            return None
+        
+        # Step 2: Extract VobSub .sub/.idx with mkvextract
+        cmd_extract = [
+            'mkvextract', str(temp_mkv), 'tracks',
+            f'0:{base_name}'
+        ]
+        try:
+            subprocess.run(cmd_extract, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to extract VobSub with mkvextract: {e}")
+            return None
+        
+        if not base_name.with_suffix('.idx').exists():
+            print(f"❌ VobSub .idx file not found after extraction")
+            return None
+        
+        # Step 3: OCR with vobsub2srt
+        cmd_ocr = [str(VOBSUB2SRT_BIN), str(base_name)]
+        try:
+            result = subprocess.run(cmd_ocr, check=True, capture_output=True, text=True)
+            srt_file = base_name.with_suffix('.srt')
+            if srt_file.exists():
+                shutil.copy(str(srt_file), str(output_path))
+                print(f"✅ Extracted: {output_path}")
+                return output_path
+            else:
+                print(f"❌ SRT file not found after OCR")
+                return None
+        except subprocess.CalledProcessError as e:
+            print(f"❌ vobsub2srt OCR failed: {e}")
+            print(f"stdout: {e.stdout}")
+            print(f"stderr: {e.stderr}")
+            return None
+
 def extract_subtitle(video_path: Path, subtitle_track_index: Optional[int] = None, 
                     track_a=None, track_y=None, interactive: bool = True) -> Optional[Path]:
     """
@@ -220,7 +303,9 @@ def extract_subtitle(video_path: Path, subtitle_track_index: Optional[int] = Non
     # Extract based on format
     if selected_track.is_text_based:
         return extract_subtitle_ffmpeg(video_path, selected_track)
-    elif selected_track.is_image_based:
+    elif selected_track.is_vobsub:
+        return extract_subtitle_vobsub(video_path, selected_track)
+    elif selected_track.is_pgs:
         return extract_subtitle_pgsrip(video_path, selected_track, track_a, track_y)
     else:
         print(f"Unsupported subtitle codec: {selected_track.codec}")
