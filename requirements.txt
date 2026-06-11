@@ -6,4 +6,4 @@ tqdm>=4.65.0
 pgsrip>=0.1.12
 langdetect>=1.0.9
 langid>=1.1.6
-openai-whisper>=20230314
+faster-whisper>=1.0.0

@@ -286,8 +286,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=50,
-        help="Number of subtitle blocks to translate per batch (default: 50, lower = less memory)"
+        default=200,
+        help="Number of subtitle blocks to translate per batch (default: 200, lower = less memory)"
     )
     parser.add_argument(
         "--no-interactive",

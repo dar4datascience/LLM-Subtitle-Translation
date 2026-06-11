@@ -60,7 +60,7 @@ class Translator:
         return translated
     
     def translate_srt(self, srt_path: Path, output_path: Optional[Path] = None, 
-                     batch_size: int = 50) -> Optional[Path]:
+                     batch_size: int = 200) -> Optional[Path]:
         """
         Translate SRT file from source to target language.
         

@@ -5,7 +5,7 @@ import logging
 import time
 from pathlib import Path
 from tqdm import tqdm
-import whisper
+from faster_whisper import WhisperModel
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -51,90 +51,104 @@ def format_timestamp(seconds: float) -> str:
 
 
 def write_srt(segments: list, output_path: Path):
-    """Write Whisper segments to SRT file."""
+    """Write faster-whisper segments to SRT file."""
     with open(output_path, 'w', encoding='utf-8') as f:
         for i, segment in enumerate(segments, start=1):
-            start = format_timestamp(segment['start'])
-            end = format_timestamp(segment['end'])
-            text = segment['text'].strip()
+            start = format_timestamp(segment.start)
+            end = format_timestamp(segment.end)
+            text = segment.text.strip()
             
             f.write(f"{i}\n")
             f.write(f"{start} --> {end}\n")
             f.write(f"{text}\n\n")
 
 
-def generate_subtitles_with_whisper(video_path: Path, model_name: str = "medium",
+def load_whisper_model(model_name: str = "medium", device: str = None,
+                       compute_type: str = "int8") -> WhisperModel:
+    """
+    Load faster-whisper model into RAM once for reuse across all videos.
+
+    Args:
+        model_name: Whisper model size (tiny, base, small, medium, large)
+        device: Device to use (cuda/cpu, auto-detect if None)
+        compute_type: Quantization type (int8 for fastest CPU, float32 for max accuracy)
+
+    Returns:
+        Loaded WhisperModel instance
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # float16 is only meaningful on GPU; fall back to float32 on CPU
+    if compute_type == "float16" and device == "cpu":
+        logger.warning("float16 compute_type is not supported on CPU, falling back to float32")
+        compute_type = "float32"
+
+    logger.info(f"Loading Whisper model '{model_name}' (device={device}, compute_type={compute_type})...")
+    start_time = time.time()
+    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    load_time = time.time() - start_time
+    logger.info(f"Whisper model loaded in {load_time:.1f} sec — resident in RAM")
+    return model
+
+
+def generate_subtitles_with_whisper(video_path: Path, model: WhisperModel,
                                    language: str = "en", output_dir: Path = None,
-                                   device: str = None, fp16: bool = True,
                                    skip_existing: bool = True) -> Path:
     """
-    Generate subtitles using Whisper Python API with batching.
-    
+    Generate subtitles using faster-whisper (model pre-loaded in RAM).
+
     Args:
         video_path: Path to video file
-        model_name: Whisper model size (tiny, base, small, medium, large)
+        model: Pre-loaded WhisperModel instance
         language: Source language code
         output_dir: Output directory
-        device: Device to use (cuda/cpu, auto-detect if None)
-        fp16: Use FP16 precision (faster on GPU)
-        
+        skip_existing: Skip if SRT already exists
+
     Returns:
         Path to generated SRT file or None if failed
     """
     if output_dir is None:
         output_dir = video_path.parent
-    
+
     expected_srt = output_dir / f"{video_path.stem}.{language}.srt"
-    
+
     if expected_srt.exists():
         if skip_existing:
             logger.info(f"⏭️  Subtitles already exist: {expected_srt}")
             return expected_srt
         else:
             logger.info(f"📝 Reprocessing existing subtitles: {expected_srt}")
-    
+
     duration = get_video_duration(video_path)
     duration_min = int(duration / 60) if duration > 0 else 0
-    
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    logger.info(f"Generating subtitles with Whisper (model={model_name}, lang={language})")
+
+    logger.info(f"Transcribing: {video_path.name}")
     logger.info(f"Video duration: {duration_min} min ({duration:.1f} sec)")
-    logger.info(f"Device: {device}, FP16: {fp16}")
-    
+
     try:
-        start_time = time.time()
-        
-        logger.info(f"Loading Whisper model '{model_name}'...")
-        model = whisper.load_model(model_name, device=device)
-        
-        load_time = time.time() - start_time
-        logger.info(f"Model loaded in {load_time:.1f} sec")
-        
-        logger.info("Transcribing audio...")
         transcribe_start = time.time()
-        
-        result = model.transcribe(
+
+        segments, info = model.transcribe(
             str(video_path),
             language=language,
-            fp16=fp16,
-            verbose=True,
             task="transcribe"
         )
-        
+
+        logger.info(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
+
+        segments_list = list(segments)
         transcribe_time = time.time() - transcribe_start
         logger.info(f"Transcription completed in {transcribe_time/60:.1f} min")
-        
+        if duration > 0 and transcribe_time > 0:
+            logger.info(f"Speed: {duration/transcribe_time:.1f}x realtime")
+
         logger.info(f"Writing SRT file: {expected_srt}")
-        write_srt(result['segments'], expected_srt)
-        
-        total_time = time.time() - start_time
+        write_srt(segments_list, expected_srt)
+
         logger.info(f"✅ Generated: {expected_srt}")
-        logger.info(f"Total time: {total_time/60:.1f} min ({duration/transcribe_time:.1f}x realtime)")
-        
         return expected_srt
-        
+
     except Exception as e:
         logger.error(f"❌ Whisper failed: {e}")
         import traceback
@@ -142,34 +156,31 @@ def generate_subtitles_with_whisper(video_path: Path, model_name: str = "medium"
         return None
 
 
-def process_video(video_path: Path, translator: Translator, whisper_model: str = "medium",
+def process_video(video_path: Path, translator: Translator, whisper_model: WhisperModel,
                  source_lang: str = "en", translate: bool = True,
-                 cleanup_original: bool = False, device: str = None,
-                 fp16: bool = True, skip_existing: bool = True) -> tuple:
+                 cleanup_original: bool = False,
+                 skip_existing: bool = True) -> tuple:
     """
     Complete pipeline: Generate subtitles with Whisper and translate.
-    
+
     Args:
         video_path: Path to video file
         translator: Translator instance
-        whisper_model: Whisper model size
+        whisper_model: Pre-loaded WhisperModel instance (resident in RAM)
         source_lang: Source language code
         translate: If True, translate to Spanish
         cleanup_original: If True, delete original SRT after translation
-        device: Device to use (cuda/cpu)
-        fp16: Use FP16 precision
-        
+        skip_existing: Skip if SRT already exists
+
     Returns:
         Tuple of (success, original_srt_path, translated_srt_path)
     """
     logger.info(f"Processing: {video_path}")
-    
+
     srt_path = generate_subtitles_with_whisper(
         video_path,
-        model_name=whisper_model,
+        model=whisper_model,
         language=source_lang,
-        device=device,
-        fp16=fp16,
         skip_existing=skip_existing
     )
     
@@ -197,25 +208,24 @@ def process_video(video_path: Path, translator: Translator, whisper_model: str =
 
 
 def process_folder(folder_path: Path, translator: Translator, recursive: bool = True,
-                  whisper_model: str = "medium", source_lang: str = "en",
+                  whisper_model: WhisperModel = None, source_lang: str = "en",
                   translate: bool = True, cleanup_original: bool = False,
-                  extensions: list = None, device: str = None, fp16: bool = True,
+                  extensions: list = None,
                   skip_existing: bool = True) -> dict:
     """
     Process all video files in folder.
-    
+
     Args:
         folder_path: Path to folder
         translator: Translator instance
         recursive: Search subdirectories
-        whisper_model: Whisper model size
+        whisper_model: Pre-loaded WhisperModel instance (resident in RAM)
         source_lang: Source language code
         translate: If True, translate to Spanish
         cleanup_original: If True, delete original SRT
         extensions: List of video extensions
-        device: Device to use
-        fp16: Use FP16 precision
-        
+        skip_existing: Skip videos that already have subtitles
+
     Returns:
         Summary dict with success/failure counts
     """
@@ -258,7 +268,7 @@ def process_folder(folder_path: Path, translator: Translator, recursive: bool = 
         
         success, srt_path, translated_path = process_video(
             video, translator, whisper_model, source_lang, translate,
-            cleanup_original, device, fp16, skip_existing
+            cleanup_original, skip_existing
         )
         
         if success:
@@ -303,9 +313,10 @@ if __name__ == "__main__":
         help="Device to use (auto-detect if not specified)"
     )
     parser.add_argument(
-        "--no-fp16",
-        action="store_true",
-        help="Disable FP16 precision (use FP32)"
+        "--compute-type",
+        choices=["int8", "float32", "float16"],
+        default="int8",
+        help="Quantization type: int8 (fastest CPU), float32 (max accuracy), float16 (GPU only) (default: int8)"
     )
     parser.add_argument(
         "--no-translate",
@@ -349,50 +360,53 @@ if __name__ == "__main__":
         logger.error(f"Path does not exist: {input_path}")
         sys.exit(1)
     
+    # Load Whisper model once into RAM — reused for every video
+    whisper_model = load_whisper_model(
+        model_name=args.model,
+        device=args.device,
+        compute_type=args.compute_type
+    )
+
     translator = None
     if not args.no_translate:
         logger.info("Loading translation model...")
         translator = Translator()
         translator.load_model()
-    
+
     if input_path.is_file():
         if translator is None:
             translator = Translator()
-        
+
         success, srt_path, translated_path = process_video(
             input_path,
             translator,
-            whisper_model=args.model,
+            whisper_model=whisper_model,
             source_lang=args.language,
             translate=not args.no_translate,
             cleanup_original=args.cleanup,
-            device=args.device,
-            fp16=not args.no_fp16,
             skip_existing=args.skip_existing
         )
-        
+
         if success:
             logger.info("✅ Processing completed!")
             sys.exit(0)
         else:
             logger.error("❌ Processing failed")
             sys.exit(1)
-    
+
     elif input_path.is_dir():
         if translator is None:
             translator = Translator()
-        
+
         results = process_folder(
             input_path,
             translator,
             recursive=not args.no_recursive,
-            whisper_model=args.model,
+            whisper_model=whisper_model,
             source_lang=args.language,
             translate=not args.no_translate,
             cleanup_original=args.cleanup,
             extensions=args.extensions,
-            device=args.device,
-            fp16=not args.no_fp16,
             skip_existing=args.skip_existing
         )
         
