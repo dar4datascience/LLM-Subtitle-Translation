@@ -94,7 +94,8 @@ def load_whisper_model(model_name: str = "medium", device: str = None,
 
 def generate_subtitles_with_whisper(video_path: Path, model: WhisperModel,
                                    language: str = "en", output_dir: Path = None,
-                                   skip_existing: bool = True) -> Path:
+                                   skip_existing: bool = True,
+                                   vad_filter: bool = True) -> Path:
     """
     Generate subtitles using faster-whisper (model pre-loaded in RAM).
 
@@ -132,7 +133,18 @@ def generate_subtitles_with_whisper(video_path: Path, model: WhisperModel,
         segments, info = model.transcribe(
             str(video_path),
             language=language,
-            task="transcribe"
+            task="transcribe",
+            vad_filter=vad_filter,
+            vad_parameters=dict(
+                threshold=0.6,
+                min_silence_duration_ms=500,
+                speech_pad_ms=200,
+                max_speech_duration_s=30,
+            ),
+            condition_on_previous_text=False,
+            beam_size=5,
+            word_timestamps=True,
+            hallucination_silence_threshold=2.0,
         )
 
         logger.info(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
@@ -159,7 +171,8 @@ def generate_subtitles_with_whisper(video_path: Path, model: WhisperModel,
 def process_video(video_path: Path, translator: Translator, whisper_model: WhisperModel,
                  source_lang: str = "en", translate: bool = True,
                  cleanup_original: bool = False,
-                 skip_existing: bool = True) -> tuple:
+                 skip_existing: bool = True,
+                 vad_filter: bool = True) -> tuple:
     """
     Complete pipeline: Generate subtitles with Whisper and translate.
 
@@ -181,7 +194,8 @@ def process_video(video_path: Path, translator: Translator, whisper_model: Whisp
         video_path,
         model=whisper_model,
         language=source_lang,
-        skip_existing=skip_existing
+        skip_existing=skip_existing,
+        vad_filter=vad_filter
     )
     
     if not srt_path:
@@ -211,7 +225,8 @@ def process_folder(folder_path: Path, translator: Translator, recursive: bool = 
                   whisper_model: WhisperModel = None, source_lang: str = "en",
                   translate: bool = True, cleanup_original: bool = False,
                   extensions: list = None,
-                  skip_existing: bool = True) -> dict:
+                  skip_existing: bool = True,
+                  vad_filter: bool = True) -> dict:
     """
     Process all video files in folder.
 
@@ -268,7 +283,7 @@ def process_folder(folder_path: Path, translator: Translator, recursive: bool = 
         
         success, srt_path, translated_path = process_video(
             video, translator, whisper_model, source_lang, translate,
-            cleanup_original, skip_existing
+            cleanup_original, skip_existing, vad_filter
         )
         
         if success:
@@ -351,6 +366,13 @@ if __name__ == "__main__":
         action="store_false",
         help="Reprocess videos even if subtitles already exist"
     )
+    parser.add_argument(
+        "--no-vad",
+        dest="vad_filter",
+        action="store_false",
+        default=True,
+        help="Disable VAD filter (not recommended — may cause hallucination on long audio)"
+    )
 
     args = parser.parse_args()
     
@@ -384,7 +406,8 @@ if __name__ == "__main__":
             source_lang=args.language,
             translate=not args.no_translate,
             cleanup_original=args.cleanup,
-            skip_existing=args.skip_existing
+            skip_existing=args.skip_existing,
+            vad_filter=args.vad_filter
         )
 
         if success:
@@ -407,7 +430,8 @@ if __name__ == "__main__":
             translate=not args.no_translate,
             cleanup_original=args.cleanup,
             extensions=args.extensions,
-            skip_existing=args.skip_existing
+            skip_existing=args.skip_existing,
+            vad_filter=args.vad_filter
         )
         
         logger.info(f"\n{'='*50}")
