@@ -214,6 +214,29 @@ class AudioManager:
             return None
     
     @staticmethod
+    def find_track_by_language(video_path: Path, lang_codes) -> Optional[AudioTrack]:
+        """
+        Find the first audio track matching any of the given language codes.
+
+        Args:
+            video_path: Path to video file
+            lang_codes: Iterable of language codes to match against the track's
+                language tag (case-insensitive). Examples: ["spa"], ["spa", "es"].
+
+        Returns:
+            First matching AudioTrack, or None if no track matches (or no tracks).
+        """
+        tracks = AudioManager.list_audio_tracks(video_path)
+        if not tracks:
+            return None
+
+        wanted = {str(code).strip().lower() for code in lang_codes if code}
+        for track in tracks:
+            if (track.language or "").strip().lower() in wanted:
+                return track
+        return None
+
+    @staticmethod
     def select_audio_track(tracks: List[AudioTrack], auto_select: Optional[int] = None) -> Optional[AudioTrack]:
         """
         Interactive audio track selection.

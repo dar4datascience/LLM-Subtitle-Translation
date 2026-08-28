@@ -60,6 +60,55 @@ class TestAudioManager(unittest.TestCase):
         selected = AudioManager.select_audio_track(tracks)
         self.assertIsNone(selected)
 
+    def test_find_track_by_language_match(self):
+        """Test finding a track by language code (case-insensitive, exact tag match)."""
+        tracks = [
+            AudioTrack(0, 'aac', 'eng', 2, 48000, 192000),
+            AudioTrack(1, 'mp3', 'spa', 2, 44100, 128000),
+            AudioTrack(2, 'flac', 'es', 2, 48000, None),
+        ]
+        original = AudioManager.list_audio_tracks
+        AudioManager.list_audio_tracks = staticmethod(lambda vp: tracks)
+        try:
+            # Match on 'spa' (3-letter tag)
+            found = AudioManager.find_track_by_language(Path('/fake.mkv'), ['spa', 'es'])
+            self.assertIsNotNone(found)
+            self.assertEqual(found.index, 1)
+            # Case-insensitive match
+            found_upper = AudioManager.find_track_by_language(Path('/fake.mkv'), ['SPA'])
+            self.assertIsNotNone(found_upper)
+            self.assertEqual(found_upper.index, 1)
+            # Match on the 2-letter tagged track only
+            found_es = AudioManager.find_track_by_language(Path('/fake.mkv'), ['ES'])
+            self.assertIsNotNone(found_es)
+            self.assertEqual(found_es.index, 2)
+        finally:
+            AudioManager.list_audio_tracks = original
+
+    def test_find_track_by_language_no_match(self):
+        """Test that None is returned when no track matches."""
+        tracks = [
+            AudioTrack(0, 'aac', 'eng', 2, 48000, 192000),
+            AudioTrack(1, 'flac', 'fra', 2, 48000, None),
+        ]
+        original = AudioManager.list_audio_tracks
+        AudioManager.list_audio_tracks = staticmethod(lambda vp: tracks)
+        try:
+            found = AudioManager.find_track_by_language(Path('/fake.mkv'), ['spa', 'es'])
+            self.assertIsNone(found)
+        finally:
+            AudioManager.list_audio_tracks = original
+
+    def test_find_track_by_language_empty(self):
+        """Test that None is returned when there are no tracks."""
+        original = AudioManager.list_audio_tracks
+        AudioManager.list_audio_tracks = staticmethod(lambda vp: [])
+        try:
+            found = AudioManager.find_track_by_language(Path('/fake.mkv'), ['spa'])
+            self.assertIsNone(found)
+        finally:
+            AudioManager.list_audio_tracks = original
+
 
 if __name__ == '__main__':
     unittest.main()

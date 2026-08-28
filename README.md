@@ -29,6 +29,7 @@ LLM-Subtitle-Translation/
 │   ├── extract_subtitles.py      # Extract + detect language
 │   ├── batch_extract.py          # Batch subtitle extraction
 │   ├── translate_srt_folder.py   # Batch translation
+│   ├── transcribe_audio_by_lang.py  # Transcribe a specific audio track by language
 │   └── pipeline.py               # Complete pipeline
 ├── requirements.txt
 ├── README.md
@@ -334,6 +335,49 @@ python scripts/translate_srt_folder.py /path/to/file.srt
 python scripts/translate_srt_folder.py /path/to/folder
 ```
 
+### Transcribe Audio Track by Language
+
+Bulk transcribe a specific audio track (selected by language tag) from MKV/MP4
+files. For each video the script finds the matching audio track via ffprobe,
+extracts it to a temporary 16 kHz mono WAV, transcribes with faster-whisper,
+and writes a Jellyfin-compatible `<video>.spa.srt` next to the video. The
+temporary WAV is deleted after transcription (unless `--keep-audio`). Videos
+without a matching audio track are skipped and logged.
+
+```bash
+# Single file (transcribe the Spanish audio track)
+python scripts/transcribe_audio_by_lang.py /path/to/video.mkv
+
+# Bulk process a folder (recursive by default)
+python scripts/transcribe_audio_by_lang.py /path/to/videos/
+
+# Use a larger model for better accuracy
+python scripts/transcribe_audio_by_lang.py /path/to/videos/ -m large
+
+# Match a different set of language tags
+python scripts/transcribe_audio_by_lang.py /path/to/videos/ --audio-language spa,es,sp
+
+# Keep the extracted WAV files for re-transcription
+python scripts/transcribe_audio_by_lang.py /path/to/videos/ --keep-audio
+
+# Reprocess videos even if a .spa.srt already exists
+python scripts/transcribe_audio_by_lang.py /path/to/videos/ --no-skip-existing
+```
+
+**Options:**
+- `-m, --model`: Whisper model size (default: `medium` — better accuracy for Spanish)
+- `-l, --language`: Source language code passed to Whisper (default: `es`)
+- `--audio-language`: Comma-separated ffprobe language tags to match (default: `spa,es`)
+- `--device`: `cuda` or `cpu` (auto-detect if not specified)
+- `--compute-type`: `int8` (fastest CPU), `float32` (max accuracy), `float16` (GPU only)
+- `--no-recursive`: Only process the specified folder, not subdirectories
+- `--extensions`: Video extensions to process (default: `*.mkv`)
+- `-s, --skip-existing`: Skip videos that already have a `.spa.srt` (default: True)
+- `--no-skip-existing`: Reprocess videos even if subtitles exist
+- `--no-vad`: Disable VAD filter (not recommended for long audio)
+- `--keep-audio`: Keep the extracted WAV after transcription (default: delete)
+- `--tmp-dir`: Directory for temporary WAV files (default: alongside each video)
+
 ## Technical Details
 
 ### Language Detection
@@ -465,6 +509,7 @@ Full list: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
 - `extract_audio(video_path, output_path, track_index, convert_to)` - Extract audio
 - `merge_audio(video_path, audio_path, output_path, replace, audio_language)` - Merge audio
 - `select_audio_track(tracks, auto_select)` - Interactive selection
+- `find_track_by_language(video_path, lang_codes)` - Find first audio track matching a language tag
 
 #### `LanguageDetector`
 - `detect_subtitle_language(srt_path, video_path, track_index, use_accurate)` - Detect language
