@@ -305,7 +305,17 @@ if __name__ == "__main__":
         default=["*.mp4", "*.mkv", "*.avi"],
         help="Video file extensions to process (default: mp4 mkv avi)"
     )
-    
+    parser.add_argument(
+        "--src-lang",
+        default="eng_Latn",
+        help="NLLB source language code (default: eng_Latn). Use fra_Latn for French, etc."
+    )
+    parser.add_argument(
+        "--tgt-lang",
+        default="spa_Latn",
+        help="NLLB target language code (default: spa_Latn)."
+    )
+
     args = parser.parse_args()
     
     if not check_whisper_installed():
@@ -320,14 +330,15 @@ if __name__ == "__main__":
     
     translator = None
     if not args.no_translate:
-        logger.info("Loading translation model...")
-        translator = Translator()
+        logger.info(f"Loading translation model (src={args.src_lang}, tgt={args.tgt_lang})...")
+        translator = Translator(src_lang=args.src_lang, tgt_lang=args.tgt_lang)
         translator.load_model()
     
     if input_path.is_file():
         if translator is None:
-            translator = Translator()
-        
+            translator = Translator(src_lang=args.src_lang, tgt_lang=args.tgt_lang)
+            translator.load_model()
+
         success, srt_path, translated_path = process_video(
             input_path,
             translator,
@@ -346,8 +357,9 @@ if __name__ == "__main__":
     
     elif input_path.is_dir():
         if translator is None:
-            translator = Translator()
-        
+            translator = Translator(src_lang=args.src_lang, tgt_lang=args.tgt_lang)
+            translator.load_model()
+
         results = process_folder(
             input_path,
             translator,
